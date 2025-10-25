@@ -1,8 +1,19 @@
 #include <iostream>
 #include <vector>
 #include <string>
-#include <map>
 #include <memory>
-#include <algorithm>
-#include <functional>
-#include <immintrin.h> // SSE Intrinsics
+#include <chrono>
+#include <random>
+
+#include <immintrin.h>
+#include <arrow/api.h>
+#include <arrow/io/api.h>
+#include <parquet/arrow/reader.h>
+
+#ifdef min
+#undef min
+#endif
+
+#ifdef max
+#undef max
+#endif
