@@ -1,5 +1,6 @@
 #include "pch.h"
-#include <chrono> 
+#include <chrono>
+#include <vector>
 #include "Misc/Logger.h"
 #include "OperatorImpl/ScanOperator.h"
 #include "OperatorImpl/FilterOperator.h"
@@ -19,13 +20,15 @@ int main() {
     std::string TestFile = "TEST_DATA.parquet";
     int FilterValue = 100;
 
+    // input query
     std::cout << "Building query: SELECT * FROM " << TestFile << " WHERE IntColumn > " << FilterValue << std::endl;
 
     long long AvxRowCount = 0;
     long long ScalarRowCount = 0;
 
-    // avx benchmark
-    // check FilterOperator.h for implementation
+    std::vector<DataChunk> AvxResults;
+    std::vector<DataChunk> ScalarResults;
+
     try
     {
         LOG_TITLE("BENCHMARK", "STARTING AVX RUN...");
@@ -38,6 +41,7 @@ int main() {
         while ((ResultChunk = FilterOp->Next()) != nullptr)
         {
             AvxRowCount += ResultChunk->num_rows();
+            AvxResults.push_back(ResultChunk);
         }
 
         auto EndTime = std::chrono::high_resolution_clock::now();
@@ -55,7 +59,6 @@ int main() {
 
     std::cout << "------------------------------------" << std::endl;
 
-    // scalar run
     try
     {
         LOG_TITLE("BENCHMARK", "STARTING SCALAR RUN...");
@@ -68,6 +71,7 @@ int main() {
         while ((ResultChunk = FilterOp->Next()) != nullptr)
         {
             ScalarRowCount += ResultChunk->num_rows();
+            ScalarResults.push_back(ResultChunk);
         }
 
         auto EndTime = std::chrono::high_resolution_clock::now();
@@ -83,7 +87,35 @@ int main() {
         LOG_TITLE("STATUS", e.what());
     }
 
+    std::cout << "------------------------------------" << std::endl;
+
+    LOG_TITLE("BENCHMARK", "FINAL VERIFICATION");
+    bool IsIdentical = true;
+    if (AvxResults.size() != ScalarResults.size())
+    {
+        IsIdentical = false;
+        LOG_MESSAGEF("VERDICT: FAILED (Chunk count mismatch: AVX=%zu, Scalar=%zu)", AvxResults.size(), ScalarResults.size());
+    }
+    else
+    {
+        for (size_t i = 0; i < AvxResults.size(); ++i)
+        {
+            if (!AvxResults[i]->Equals(*ScalarResults[i]))
+            {
+                IsIdentical = false;
+                LOG_MESSAGEF("VERDICT: FAILED (Data mismatch in chunk %zu)", i);
+                break;
+            }
+        }
+    }
+
+    if (IsIdentical)
+    {
+        LOG_MESSAGE("VERDICT: PASSED (Results are IDENTICAL)");
+    }
+
+    std::cout << "------------------------------------" << std::endl;
+
     std::cin.get();
     return 0;
 }
-
