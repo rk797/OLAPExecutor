@@ -1,104 +1,89 @@
 #include "pch.h"
-#include "Logger.h"
-#include <immintrin.h>
-#include <vector>
-#include <numeric>
-#include <random>
-#include <chrono>
-
-void ScalarAdd(int* Result, const int* A, const int* B, int Count)
-{
-    for (int i = 0; i < Count; ++i)
-    {
-        Result[i] = A[i] + B[i];
-    }
-}
-
-void SseAdd(int* Result, const int* A, const int* B, int Count)
-{
-    int i = 0;
-
-    for (; i <= Count - 4; i += 4)
-    {
-        __m128i TrayA = _mm_loadu_si128((__m128i*)(A + i));
-        __m128i TrayB = _mm_loadu_si128((__m128i*)(B + i));
-
-        __m128i TrayResult = _mm_add_epi32(TrayA, TrayB);
-
-        _mm_storeu_si128((__m128i*)(Result + i), TrayResult);
-    }
-
-    for (; i < Count; ++i)
-    {
-        Result[i] = A[i] + B[i];
-    }
-}
-
+#include <chrono> 
+#include "Misc/Logger.h"
+#include "OperatorImpl/ScanOperator.h"
+#include "OperatorImpl/FilterOperator.h"
 
 int main() {
 
-#if defined(__AVX512F__)
-    std::cout << "AVX-512 Foundation instructions are enabled" << std::endl;
+#if defined(__AVX2__)
+    std::cout << "AVX2 instructions are enabled" << std::endl;
+#elif defined(__AVX512F__)
+    std::cout << "AVX-512 Foundation instructions are enabled (but AVX2 requested)" << std::endl;
 #else
-    std::cout << "AVX-512F not enabled. Check compiler flags." << std::endl;
+    std::cout << "AVX2 not enabled. Check compiler flags." << std::endl;
 #endif
+
     Logger::Init();
 
-    const int DataSize = 10000000;
-    const int NumIterations = 100;
+    std::string TestFile = "TEST_DATA.parquet";
+    int FilterValue = 100;
 
-    std::vector<int> VectorA(DataSize);
-    std::vector<int> VectorB(DataSize);
-    std::vector<int> VectorResult(DataSize);
+    std::cout << "Building query: SELECT * FROM " << TestFile << " WHERE IntColumn > " << FilterValue << std::endl;
 
-    std::mt19937 Rng(1234);
-    std::uniform_int_distribution<int> Dist(0, 1000);
+    long long AvxRowCount = 0;
+    long long ScalarRowCount = 0;
 
-    for (int i = 0; i < DataSize; ++i)
+    // avx benchmark
+    // check FilterOperator.h for implementation
+    try
     {
-        VectorA[i] = Dist(Rng);
-        VectorB[i] = Dist(Rng);
+        LOG_TITLE("BENCHMARK", "STARTING AVX RUN...");
+        auto StartTime = std::chrono::high_resolution_clock::now();
+
+        std::unique_ptr<Operator> ScanOp = std::make_unique<ScanOperator>(TestFile);
+        std::unique_ptr<Operator> FilterOp = std::make_unique<FilterOperator>(std::move(ScanOp), FilterValue, FilterOperator::FilterMode::Avx);
+
+        DataChunk ResultChunk;
+        while ((ResultChunk = FilterOp->Next()) != nullptr)
+        {
+            AvxRowCount += ResultChunk->num_rows();
+        }
+
+        auto EndTime = std::chrono::high_resolution_clock::now();
+        auto Duration = std::chrono::duration_cast<std::chrono::microseconds>(EndTime - StartTime);
+
+        LOG_TITLE("BENCHMARK", "AVX RUN FINISHED");
+        LOG_MESSAGEF("AVX Time (microseconds): %d", Duration.count());
+        LOG_MESSAGEF("AVX Result Rows: %d", AvxRowCount);
+    }
+    catch (const std::exception& e)
+    {
+        LOG_TITLE("STATUS", "AVX QUERY FAILED");
+        LOG_TITLE("STATUS", e.what());
     }
 
-    std::cout << "Starting benchmarks with " << DataSize << " elements..." << std::endl;
+    std::cout << "------------------------------------" << std::endl;
 
-    auto StartTime = std::chrono::high_resolution_clock::now();
-
-    for (int i = 0; i < NumIterations; ++i)
+    // scalar run
+    try
     {
-        ScalarAdd(VectorResult.data(), VectorA.data(), VectorB.data(), DataSize);
+        LOG_TITLE("BENCHMARK", "STARTING SCALAR RUN...");
+        auto StartTime = std::chrono::high_resolution_clock::now();
+
+        std::unique_ptr<Operator> ScanOp = std::make_unique<ScanOperator>(TestFile);
+        std::unique_ptr<Operator> FilterOp = std::make_unique<FilterOperator>(std::move(ScanOp), FilterValue, FilterOperator::FilterMode::Scalar);
+
+        DataChunk ResultChunk;
+        while ((ResultChunk = FilterOp->Next()) != nullptr)
+        {
+            ScalarRowCount += ResultChunk->num_rows();
+        }
+
+        auto EndTime = std::chrono::high_resolution_clock::now();
+        auto Duration = std::chrono::duration_cast<std::chrono::microseconds>(EndTime - StartTime);
+
+        LOG_TITLE("BENCHMARK", "SCALAR RUN FINISHED");
+        LOG_MESSAGEF("Scalar Time (microseconds): %d", Duration.count());
+        LOG_MESSAGEF("Scalar Result Rows: %d", ScalarRowCount);
     }
-
-    auto EndTime = std::chrono::high_resolution_clock::now();
-    auto DurationScalar = std::chrono::duration_cast<std::chrono::milliseconds>(EndTime - StartTime).count();
-
-    volatile int ChecksumScalar = VectorResult[0];
-
-    StartTime = std::chrono::high_resolution_clock::now();
-
-    for (int i = 0; i < NumIterations; ++i)
+    catch (const std::exception& e)
     {
-        SseAdd(VectorResult.data(), VectorA.data(), VectorB.data(), DataSize);
+        LOG_TITLE("STATUS", "SCALAR QUERY FAILED");
+        LOG_TITLE("STATUS", e.what());
     }
-
-    EndTime = std::chrono::high_resolution_clock::now();
-    auto DurationSse = std::chrono::duration_cast<std::chrono::milliseconds>(EndTime - StartTime).count();
-
-    volatile int ChecksumSse = VectorResult[0];
-
-    long long TotalElements = (long long)DataSize * NumIterations;
-    long long TotalBytes = TotalElements * sizeof(int) * 2;
-
-    double ThroughputScalar = (double)TotalBytes / (DurationScalar / 1000.0) / (1024 * 1024 * 1024);
-    double ThroughputSse = (double)TotalBytes / (DurationSse / 1000.0) / (1024 * 1024 * 1024);
-
-    std::cout << "[ RESULTS ]" << std::endl;
-    std::cout << "ScalarAdd Time: " << DurationScalar << " ms" << std::endl;
-    std::cout << "ScalarAdd Throughput: " << ThroughputScalar << " GB/s" << std::endl;
-    std::cout << std::endl;
-    std::cout << "SseAdd Time:    " << DurationSse << " ms" << std::endl;
-    std::cout << "SseAdd Throughput:    " << ThroughputSse << " GB/s" << std::endl;
 
     std::cin.get();
     return 0;
 }
+

@@ -8,7 +8,7 @@ namespace arrow { class RecordBatchReader; }
 class ScanOperator : public Operator
 {
 public:
-    ScanOperator(const std::string& Filepath);
+    ScanOperator(const std::string& Filepath); // parquet file path
     ~ScanOperator(); 
 
 	DataChunk Next() override;

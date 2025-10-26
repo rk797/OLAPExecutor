@@ -77,8 +77,7 @@ namespace Logger {
             prefixText = "ERROR";
         }
 
-        std::cout << COLOR_GRAY << "[" << prefixColor << prefixText << COLOR_GRAY << "] "
-            << COLOR_LIGHT_BLUE << msg << COLOR_RESET << std::endl;
+        std::cout << COLOR_LIGHT_BLUE << msg << COLOR_RESET << std::endl;
     }
 
     inline void LogToFileOnly(const std::string& msg) {
