@@ -1,120 +1,112 @@
-#include "pch.h"
-#include <chrono>
+﻿#include "pch.h"
+#include <iostream>
 #include <vector>
 #include "Misc/Logger.h"
 #include "OperatorImpl/ScanOperator.h"
+#include "OperatorImpl/MemoryScanOperator.h"
+#include "OperatorImpl/AggregateFunctions/SumOperator.h"
 #include "OperatorImpl/FilterOperator.h"
+#include "Benchmarking/BenchmarkRunner.h"
 
-int main() {
 
-#if defined(__AVX2__)
-    std::cout << "AVX2 instructions are enabled" << std::endl;
-#elif defined(__AVX512F__)
-    std::cout << "AVX-512 Foundation instructions are enabled (but AVX2 requested)" << std::endl;
-#else
-    std::cout << "AVX2 not enabled. Check compiler flags." << std::endl;
+/**
+    Move all data from disk into RAM
+*/
+std::vector<DataChunk> PreloadData(const std::string& FileName)
+{
+    LOG_TITLE("SETUP", "Pre-loading data into RAM..");
+    std::vector<DataChunk> Chunks;
+    ScanOperator Scan(FileName);
+
+    DataChunk Chunk; // batch of rows
+    while ((Chunk = Scan.Next()) != nullptr)
+    {
+        Chunks.push_back(Chunk);
+    }
+    LOG_MESSAGEF("Loaded %zu chunks into memory.", Chunks.size());
+    return Chunks;
+}
+// TODO:
+// - Change benchmarking logic to only measure CPU time
+// - Implement more Aggregate functions (AVG, COUNT, MIN, MAX)
+int main()
+{
+#ifdef _WIN32
+    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
 #endif
 
     Logger::Init();
 
     std::string TestFile = "TEST_DATA.parquet";
-    int FilterValue = 100;
-
-    // input query
-    std::cout << "Building query: SELECT * FROM " << TestFile << " WHERE IntColumn > " << FilterValue << std::endl;
-
-    long long AvxRowCount = 0;
-    long long ScalarRowCount = 0;
-
-    std::vector<DataChunk> AvxResults;
-    std::vector<DataChunk> ScalarResults;
+    BenchmarkRunner Runner(10);
 
     try
     {
-        LOG_TITLE("BENCHMARK", "STARTING AVX RUN...");
-        auto StartTime = std::chrono::high_resolution_clock::now();
+        std::vector<DataChunk> InMemoryData = PreloadData(TestFile);
 
-        std::unique_ptr<Operator> ScanOp = std::make_unique<ScanOperator>(TestFile);
-        std::unique_ptr<Operator> FilterOp = std::make_unique<FilterOperator>(std::move(ScanOp), FilterValue, FilterOperator::FilterMode::Avx);
+        std::cout << "============================================================" << std::endl;
+        std::cout << "BENCHMARK SUITE: IN-MEMORY (CPU BOUND)" << std::endl;
+        std::cout << "============================================================" << std::endl;
 
-        DataChunk ResultChunk;
-        while ((ResultChunk = FilterOp->Next()) != nullptr)
+
+        auto ScalarFilterPlan = [&]() -> std::unique_ptr<Operator> 
         {
-            AvxRowCount += ResultChunk->num_rows();
-            AvxResults.push_back(ResultChunk);
-        }
+            auto Scan = std::make_unique<MemoryScanOperator>(InMemoryData);
+            return std::make_unique<FilterOperator>(std::move(Scan), 5000, FilterOperator::FilterMode::Scalar);
+		};
 
-        auto EndTime = std::chrono::high_resolution_clock::now();
-        auto Duration = std::chrono::duration_cast<std::chrono::microseconds>(EndTime - StartTime);
+        auto AvxFilterPlan = [&]() -> std::unique_ptr<Operator> 
+        {
+            auto Scan = std::make_unique<MemoryScanOperator>(InMemoryData);
+            return std::make_unique<FilterOperator>(std::move(Scan), 5000, FilterOperator::FilterMode::Avx);
+		};
 
-        LOG_TITLE("BENCHMARK", "AVX RUN FINISHED");
-        LOG_MESSAGEF("AVX Time (microseconds): %d", Duration.count());
-        LOG_MESSAGEF("AVX Result Rows: %d", AvxRowCount);
+		BenchmarkResult ScalarFilterRes = Runner.Run("Scalar Filter", ScalarFilterPlan);
+		BenchmarkResult AvxFilterRes = Runner.Run("AVX Filter", AvxFilterPlan);
+		BenchmarkRunner::PrintComparison("Scalar Filter", ScalarFilterRes.Stats, "AVX Filter", AvxFilterRes.Stats);
+
+
+        // Returns a unique pointer to the root of the operator tree
+        auto ScalarSumPlan = [&]() -> std::unique_ptr<Operator> 
+        {
+            auto Scan = std::make_unique<MemoryScanOperator>(InMemoryData);
+            return std::make_unique<SumOperator>(std::move(Scan), SumOperator::SumMode::Scalar);
+        };
+
+        auto AvxSumPlan = [&]() -> std::unique_ptr<Operator> 
+        {
+            // Define the Source Operator (lowest in the pipeline)
+            // The 'MemoryScanOperator' is used here specifically to read the data
+            // from the pre-loaded 'InMemoryData' vector (captured by reference '[&]').
+            // This isolates the benchmark to measure only the CPU computation time,
+            // excluding slow disk I/O and file parsing overhead.
+            auto Scan = std::make_unique<MemoryScanOperator>(InMemoryData);
+
+            // Define the Aggregation Operator (the root of this simple pipeline)
+            // This creates the SumOperator, which will pull data from the ScanOperator.
+            // std::move(Scan) it transfers ownership of the 'Scan' operator
+            // to the 'SumOperator', forming the single-path pipeline (Scan -> Sum).
+            // SumOperator::SumMode::Avx explicitly enables your vectorized (SIMD)
+            // summation logic, which is what we are trying to benchmark.
+            return std::make_unique<SumOperator>(
+                std::move(Scan),
+                SumOperator::SumMode::Avx
+            );
+        };
+
+        BenchmarkResult ScalarSumRes = Runner.Run("Scalar Sum", ScalarSumPlan);
+        BenchmarkResult AvxSumRes = Runner.Run("AVX Sum", AvxSumPlan);
+
+        BenchmarkRunner::PrintComparison("Scalar Sum", ScalarSumRes.Stats, "AVX Sum", AvxSumRes.Stats);
+        BenchmarkRunner::Verify(ScalarSumRes.ResultChunks, AvxSumRes.ResultChunks);
+
     }
     catch (const std::exception& e)
     {
-        LOG_TITLE("STATUS", "AVX QUERY FAILED");
-        LOG_TITLE("STATUS", e.what());
+        LOG_TITLE("CRITICAL ERROR", e.what());
+        return 1;
     }
-
-    std::cout << "------------------------------------" << std::endl;
-
-    try
-    {
-        LOG_TITLE("BENCHMARK", "STARTING SCALAR RUN...");
-        auto StartTime = std::chrono::high_resolution_clock::now();
-
-        std::unique_ptr<Operator> ScanOp = std::make_unique<ScanOperator>(TestFile);
-        std::unique_ptr<Operator> FilterOp = std::make_unique<FilterOperator>(std::move(ScanOp), FilterValue, FilterOperator::FilterMode::Scalar);
-
-        DataChunk ResultChunk;
-        while ((ResultChunk = FilterOp->Next()) != nullptr)
-        {
-            ScalarRowCount += ResultChunk->num_rows();
-            ScalarResults.push_back(ResultChunk);
-        }
-
-        auto EndTime = std::chrono::high_resolution_clock::now();
-        auto Duration = std::chrono::duration_cast<std::chrono::microseconds>(EndTime - StartTime);
-
-        LOG_TITLE("BENCHMARK", "SCALAR RUN FINISHED");
-        LOG_MESSAGEF("Scalar Time (microseconds): %d", Duration.count());
-        LOG_MESSAGEF("Scalar Result Rows: %d", ScalarRowCount);
-    }
-    catch (const std::exception& e)
-    {
-        LOG_TITLE("STATUS", "SCALAR QUERY FAILED");
-        LOG_TITLE("STATUS", e.what());
-    }
-
-    std::cout << "------------------------------------" << std::endl;
-
-    LOG_TITLE("BENCHMARK", "FINAL VERIFICATION");
-    bool IsIdentical = true;
-    if (AvxResults.size() != ScalarResults.size())
-    {
-        IsIdentical = false;
-        LOG_MESSAGEF("VERDICT: FAILED (Chunk count mismatch: AVX=%zu, Scalar=%zu)", AvxResults.size(), ScalarResults.size());
-    }
-    else
-    {
-        for (size_t i = 0; i < AvxResults.size(); ++i)
-        {
-            if (!AvxResults[i]->Equals(*ScalarResults[i]))
-            {
-                IsIdentical = false;
-                LOG_MESSAGEF("VERDICT: FAILED (Data mismatch in chunk %zu)", i);
-                break;
-            }
-        }
-    }
-
-    if (IsIdentical)
-    {
-        LOG_MESSAGE("VERDICT: PASSED (Results are IDENTICAL)");
-    }
-
-    std::cout << "------------------------------------" << std::endl;
 
     std::cin.get();
     return 0;

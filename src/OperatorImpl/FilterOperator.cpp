@@ -9,7 +9,6 @@ FilterOperator::FilterOperator(std::unique_ptr<Operator> Child, int FilterValue,
     this->CurrentMode = Mode;
 }
 
-
 DataChunk FilterOperator::Next()
 {
     DataChunk InputChunk = this->ChildOperator->Next();
@@ -38,6 +37,7 @@ DataChunk FilterOperator::Next()
 // TODO: Fix the slow SIMD gather
 DataChunk FilterOperator::ApplyAvxFilter(const DataChunk& InputChunk)
 {
+
     // get the input column (just the first column for now since we are testing)
     std::shared_ptr<arrow::Int32Array> Column = std::static_pointer_cast<arrow::Int32Array>(InputChunk->column(0));
     const int32_t* InputData = Column->raw_values();
@@ -59,7 +59,7 @@ DataChunk FilterOperator::ApplyAvxFilter(const DataChunk& InputChunk)
     int i = 0;
     for (; i <= InputLength - 8; i += 8)
     {
-        __m256i DataVector = _mm256_loadu_si256((__m256i*)(InputData + i)); // unaligned load (which is safer)
+        __m256i DataVector = _mm256_load_si256((__m256i*)(InputData + i)); // aligned load
         // compare each element in DataVector with CompareVector
         // generates a mask where each element is all 1s (0xFFFFFFFF) if the condition is true, or all 0s if false
         // example: [0xFFFFFFFF 0 0xFFFFFFFF 0 0 0xFFFFFFFF 0 0] for a comparison result of [true, false, true, false, false, true, false, false]
@@ -67,7 +67,6 @@ DataChunk FilterOperator::ApplyAvxFilter(const DataChunk& InputChunk)
         // take the top bit from each mask and create an 8-bit integer mask
         int Mask = _mm256_movemask_ps(_mm256_castsi256_ps(MaskVector));
 
-        // OPTIMIZATION: Add fast-paths for all-fail or all-pass
         if (Mask == 0)
         {
             // all 8 elements failed the check. Skip.
@@ -111,6 +110,68 @@ DataChunk FilterOperator::ApplyAvxFilter(const DataChunk& InputChunk)
     PARQUET_THROW_NOT_OK(Builder.Finish(&FilteredArray));
     return arrow::RecordBatch::Make(InputChunk->schema(), FilteredArray->length(), { FilteredArray });
 }
+
+
+
+//DataChunk FilterOperator::ApplyAvxFilter(const DataChunk& InputChunk)
+//{
+//    // get the input column (just the first column for now since we are testing)
+//    std::shared_ptr<arrow::Int32Array> Column = std::static_pointer_cast<arrow::Int32Array>(InputChunk->column(0));
+//
+//    const int* InputData = Column->raw_values();
+//    int64_t InputLength = Column->length();
+//
+//    arrow::Int32Builder Builder;
+//
+//    // Fill the CompareVector with the ValueToCompare 8 times
+//    // [v0 v0 v0 v0 v0 v0 v0 v0] where v0 = ValueToCompare
+//    __m256i CompareVector = _mm256_set1_epi32(this->ValueToCompare);
+//
+//    alignas(32) int TmpBuffer[8];
+//
+//    // process the data in chunks of 8 integers
+//    int i = 0;
+//    for (; i <= InputLength - 8; i += 8)
+//    {
+//        __m256i DataVector = _mm256_load_si256((__m256i*)(InputData + i)); // aligned load
+//
+//        // compare each element in DataVector with CompareVector
+//        // generates a mask where each element is all 1s (0xFFFFFFFF) if the condition is true, or all 0s if false
+//        // example: [0xFFFFFFFF 0 0xFFFFFFFF 0 0 0xFFFFFFFF 0 0] for a comparison result of [true, false, true, false, false, true, false, false]
+//        __m256i MaskVector = _mm256_cmpgt_epi32(DataVector, CompareVector);
+//
+//        // take the top bit from each mask and create an 8-bit integer mask
+//        int Mask = _mm256_movemask_ps(_mm256_castsi256_ps(MaskVector));
+//
+//        if (Mask != 0)
+//        {
+//           
+//            for (int j = 0; j < 8; ++j)
+//            {
+//                if ((Mask >> j) & 1)
+//                {
+//                    PARQUET_THROW_NOT_OK(Builder.Append(InputData[i + j]));
+//                }
+//            }
+//        }
+//    }
+//
+//    // scalar processing for remaining elements that didn't fit into a vector of 8 ints
+//    for (; i < InputLength; ++i)
+//    {
+//        if (InputData[i] > this->ValueToCompare)
+//        {
+//            PARQUET_THROW_NOT_OK(Builder.Append(InputData[i]));
+//        }
+//    }
+//
+//    std::shared_ptr<arrow::Array> FilteredArray;
+//    PARQUET_THROW_NOT_OK(Builder.Finish(&FilteredArray));
+//
+//    return arrow::RecordBatch::Make(InputChunk->schema(), FilteredArray->length(), { FilteredArray });
+//}
+
+
 // Scalar version for comparison
 DataChunk FilterOperator::ApplyScalarFilter(const DataChunk& InputChunk)
 {
