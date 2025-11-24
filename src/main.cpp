@@ -53,13 +53,13 @@ int main()
         auto ScalarFilterPlan = [&]() -> std::unique_ptr<Operator> 
         {
             auto Scan = std::make_unique<MemoryScanOperator>(InMemoryData);
-            return std::make_unique<FilterOperator>(std::move(Scan), 5000, FilterOperator::FilterMode::Scalar);
+            return std::make_unique<FilterOperator>(std::move(Scan), 5000, ExecutionMode::SCALAR);
 		};
 
         auto AvxFilterPlan = [&]() -> std::unique_ptr<Operator> 
         {
             auto Scan = std::make_unique<MemoryScanOperator>(InMemoryData);
-            return std::make_unique<FilterOperator>(std::move(Scan), 5000, FilterOperator::FilterMode::Avx);
+            return std::make_unique<FilterOperator>(std::move(Scan), 5000, ExecutionMode::AVX2);
 		};
 
 		BenchmarkResult ScalarFilterRes = Runner.Run("Scalar Filter", ScalarFilterPlan);
@@ -71,7 +71,7 @@ int main()
         auto ScalarSumPlan = [&]() -> std::unique_ptr<Operator> 
         {
             auto Scan = std::make_unique<MemoryScanOperator>(InMemoryData);
-            return std::make_unique<SumOperator>(std::move(Scan), SumOperator::SumMode::Scalar);
+            return std::make_unique<SumOperator>(std::move(Scan), ExecutionMode::SCALAR);
         };
 
         auto AvxSumPlan = [&]() -> std::unique_ptr<Operator> 
@@ -89,10 +89,7 @@ int main()
             // to the 'SumOperator', forming the single-path pipeline (Scan -> Sum).
             // SumOperator::SumMode::Avx explicitly enables your vectorized (SIMD)
             // summation logic, which is what we are trying to benchmark.
-            return std::make_unique<SumOperator>(
-                std::move(Scan),
-                SumOperator::SumMode::Avx
-            );
+            return std::make_unique<SumOperator>(std::move(Scan), ExecutionMode::AVX2 );
         };
 
         BenchmarkResult ScalarSumRes = Runner.Run("Scalar Sum", ScalarSumPlan);

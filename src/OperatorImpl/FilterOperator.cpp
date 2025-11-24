@@ -2,7 +2,7 @@
 #include "FilterOperator.h"
 #include "arrow/builder.h"
 
-FilterOperator::FilterOperator(std::unique_ptr<Operator> Child, int FilterValue, FilterMode Mode)
+FilterOperator::FilterOperator(std::unique_ptr<Operator> Child, int FilterValue, ExecutionMode Mode)
 {
     this->ChildOperator = std::move(Child);
     this->ValueToCompare = FilterValue;
@@ -17,9 +17,9 @@ DataChunk FilterOperator::Next()
         return nullptr;
     }
 
-    if (this->CurrentMode == FilterMode::Avx)
+    if (this->CurrentMode == ExecutionMode::AVX2)
     {
-        return this->ApplyAvxFilter(InputChunk);
+        return this->ApplyAvx2Filter(InputChunk);
     }
     else
     {
@@ -35,7 +35,7 @@ DataChunk FilterOperator::Next()
 
 // Processes 8 integers at a time to find values that are greater than ValueToCompare
 // TODO: Fix the slow SIMD gather
-DataChunk FilterOperator::ApplyAvxFilter(const DataChunk& InputChunk)
+DataChunk FilterOperator::ApplyAvx2Filter(const DataChunk& InputChunk)
 {
 
     // get the input column (just the first column for now since we are testing)

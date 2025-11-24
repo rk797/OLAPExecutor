@@ -5,15 +5,20 @@
 class SumOperator : public Operator
 {
 public:
-    enum class SumMode { Avx, Scalar };
 
 	// Child operator here is typically a ScanOperator (I/O bound) or MemoryScanOperator
-    SumOperator(std::unique_ptr<Operator> Child, SumMode Mode);
+    SumOperator(std::unique_ptr<Operator> child, ExecutionMode mode)
+        : Operator(mode)
+    {
+        this->ChildOperator = std::move(child);
+        this->bFinished = false;
+    }
+
+
     DataChunk Next() override;
 
 private:
     std::unique_ptr<Operator> ChildOperator;
-    SumMode CurrentMode;
     bool bFinished;
 
     long long CalculateAvxSum(const int32_t* Data, int64_t Length);

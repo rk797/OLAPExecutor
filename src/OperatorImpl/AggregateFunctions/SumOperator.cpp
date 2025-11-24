@@ -2,12 +2,7 @@
 #include "SumOperator.h"
 #include <immintrin.h>
 
-SumOperator::SumOperator(std::unique_ptr<Operator> Child, SumMode Mode)
-{
-    this->ChildOperator = std::move(Child);
-    this->CurrentMode = Mode;
-    this->bFinished = false;
-}
+
 
 // returns the horizontal sum of a 256-bit register containing 8 int32_t values
 int32_t SumOperator::HSum256(__m256i v)
@@ -89,7 +84,7 @@ DataChunk SumOperator::Next()
         std::shared_ptr<arrow::Int32Array> Column = std::static_pointer_cast<arrow::Int32Array>(Chunk->column(0));
         const int32_t* RawValues = Column->raw_values();
 
-        if (this->CurrentMode == SumMode::Avx)
+        if (this->CurrentMode == ExecutionMode::AVX2)
         {
             GrandTotal += this->CalculateAvxSum(RawValues, Column->length());
         }

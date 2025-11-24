@@ -26,7 +26,7 @@ public:
     // Defines a function that returns a new Operator tree (Query Plan)
     using PlanFactory = std::function<std::unique_ptr<Operator>()>;
 
-    BenchmarkRunner(int NumRuns = 10);
+    BenchmarkRunner(int NumRuns = 50);
 
     BenchmarkResult Run(const std::string& TaskName, PlanFactory Factory);
 
