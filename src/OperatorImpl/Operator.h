@@ -26,4 +26,5 @@ public:
 
 protected:
     ExecutionMode CurrentMode;
+    bool bFinished = false;
 };

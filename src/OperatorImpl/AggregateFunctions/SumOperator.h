@@ -19,9 +19,8 @@ public:
 
 private:
     std::unique_ptr<Operator> ChildOperator;
-    bool bFinished;
 
-    long long CalculateAvxSum(const int32_t* Data, int64_t Length);
+    long long CalculateAvx2Sum(const int32_t* Data, int64_t Length);
     long long CalculateScalarSum(const int32_t* Data, int64_t Length);
 
 	// returns the horizontal sum of a 256-bit register containing 8 int32_t values

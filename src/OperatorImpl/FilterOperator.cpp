@@ -34,7 +34,7 @@ DataChunk FilterOperator::Next()
 // _epi32 -> Data type: e: "extended", p: operates on all elements in the vector, i32: 32-bit signed integers
 
 // Processes 8 integers at a time to find values that are greater than ValueToCompare
-// TODO: Fix the slow SIMD gather
+// TODO: Change this to adhere to our new standards for Operator. We no longer need to use arrow:Int32Array and can instead just use a simple int32_t*
 DataChunk FilterOperator::ApplyAvx2Filter(const DataChunk& InputChunk)
 {
 

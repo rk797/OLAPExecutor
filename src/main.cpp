@@ -9,9 +9,8 @@
 #include "Benchmarking/BenchmarkRunner.h"
 
 
-/**
-    Move all data from disk into RAM
-*/
+
+// Moves all data from disk into RAM to avoid expensive I/O during benchmarking
 std::vector<DataChunk> PreloadData(const std::string& FileName)
 {
     LOG_TITLE("SETUP", "Pre-loading data into RAM..");
@@ -44,6 +43,13 @@ int main()
     try
     {
         std::vector<DataChunk> InMemoryData = PreloadData(TestFile);
+        long long TotalInputRows = 0;
+        for (const auto& Chunk : InMemoryData)
+        {
+            TotalInputRows += Chunk->num_rows();
+        }
+
+        LOG_MESSAGEF("Total Input Rows: %lld", TotalInputRows);
 
         std::cout << "============================================================" << std::endl;
         std::cout << "BENCHMARK SUITE: IN-MEMORY (CPU BOUND)" << std::endl;
@@ -62,8 +68,8 @@ int main()
             return std::make_unique<FilterOperator>(std::move(Scan), 5000, ExecutionMode::AVX2);
 		};
 
-		BenchmarkResult ScalarFilterRes = Runner.Run("Scalar Filter", ScalarFilterPlan);
-		BenchmarkResult AvxFilterRes = Runner.Run("AVX Filter", AvxFilterPlan);
+		BenchmarkResult ScalarFilterRes = Runner.Run("Scalar Filter", ScalarFilterPlan, TotalInputRows);
+		BenchmarkResult AvxFilterRes = Runner.Run("AVX Filter", AvxFilterPlan, TotalInputRows);
 		BenchmarkRunner::PrintComparison("Scalar Filter", ScalarFilterRes.Stats, "AVX Filter", AvxFilterRes.Stats);
 
 
@@ -87,13 +93,11 @@ int main()
             // This creates the SumOperator, which will pull data from the ScanOperator.
             // std::move(Scan) it transfers ownership of the 'Scan' operator
             // to the 'SumOperator', forming the single-path pipeline (Scan -> Sum).
-            // SumOperator::SumMode::Avx explicitly enables your vectorized (SIMD)
-            // summation logic, which is what we are trying to benchmark.
             return std::make_unique<SumOperator>(std::move(Scan), ExecutionMode::AVX2 );
         };
 
-        BenchmarkResult ScalarSumRes = Runner.Run("Scalar Sum", ScalarSumPlan);
-        BenchmarkResult AvxSumRes = Runner.Run("AVX Sum", AvxSumPlan);
+        BenchmarkResult ScalarSumRes = Runner.Run("Scalar Sum", ScalarSumPlan, TotalInputRows);
+        BenchmarkResult AvxSumRes = Runner.Run("AVX Sum", AvxSumPlan, TotalInputRows);
 
         BenchmarkRunner::PrintComparison("Scalar Sum", ScalarSumRes.Stats, "AVX Sum", AvxSumRes.Stats);
         BenchmarkRunner::Verify(ScalarSumRes.ResultChunks, AvxSumRes.ResultChunks);

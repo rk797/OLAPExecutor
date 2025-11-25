@@ -2,7 +2,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import random
 
-TableSize = 100000000
+TableSize = 10000000
 
 DataList = []
 for i in range(TableSize):

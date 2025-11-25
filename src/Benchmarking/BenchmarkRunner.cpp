@@ -24,11 +24,11 @@ void BenchmarkRunner::WarmupCpu()
     }
 }
 
-BenchmarkResult BenchmarkRunner::Run(const std::string& TaskName, PlanFactory Factory)
+BenchmarkResult BenchmarkRunner::Run(const std::string& TaskName, PlanFactory Factory, long long InputRowCount)
 {
     std::vector<long long> Times;
     std::vector<DataChunk> FirstRunResults;
-    long long TotalRowCount = 0;
+    long long OutputRowCount = 0;
 
     LOG_TITLE("BENCHMARK", "RUNNING: " + TaskName);
 
@@ -64,26 +64,29 @@ BenchmarkResult BenchmarkRunner::Run(const std::string& TaskName, PlanFactory Fa
         if (i == 0)
         {
             FirstRunResults = std::move(CurrentResults);
-            TotalRowCount = IterationRowCount;
+            OutputRowCount = IterationRowCount;
         }
     }
 
-    BenchmarkStats Stats = this->CalculateStats(Times, TotalRowCount);
+    BenchmarkStats Stats = this->CalculateStats(Times, OutputRowCount, InputRowCount);
 
     std::cout << std::fixed << std::setprecision(2);
     LOG_MESSAGEF("   Mean: %.2f ns", Stats.Mean);
     LOG_MESSAGEF("   Median: %.2f ns", Stats.Median);
     LOG_MESSAGEF("   StdDev: %.2f ns", Stats.StdDev);
+    std::cout << std::fixed << std::setprecision(2);
+    LOG_MESSAGEF("   Mean: %.2f ns", Stats.Mean);
+    LOG_MESSAGEF("   Bandwidth: %.2f GB/s", Stats.ThroughputGBps);
 
     return { Stats, FirstRunResults };
 }
 
-BenchmarkStats BenchmarkRunner::CalculateStats(std::vector<long long>& Times, long long RowCount)
+BenchmarkStats BenchmarkRunner::CalculateStats(std::vector<long long>& Times, long long OutputRowCount, long long InputRowCount)
 {
     std::sort(Times.begin(), Times.end());
 
     BenchmarkStats Stats;
-    Stats.RowCount = RowCount;
+    Stats.RowCount = OutputRowCount;
     Stats.Min = Times.front();
     Stats.Max = Times.back();
     Stats.Median = Times[Times.size() / 2];
@@ -97,25 +100,33 @@ BenchmarkStats BenchmarkRunner::CalculateStats(std::vector<long long>& Times, lo
     }
     Stats.StdDev = std::sqrt(VarianceSum / Times.size());
 
+    // TODO: Ask the operator for the data width
+    double TotalBytes = (double)InputRowCount * sizeof(int32_t);
+
+    double TotalGB = TotalBytes / 1000000000.0;
+	double TimeSeconds = Stats.Mean / 1000000000.0; // Convert ns to seconds
+
+    Stats.ThroughputGBps = TotalGB / TimeSeconds;
+
     return Stats;
 }
 
-void BenchmarkRunner::PrintComparison(const std::string& BaselineName, const BenchmarkStats& Baseline,
-    const std::string& CandidateName, const BenchmarkStats& Candidate)
+void BenchmarkRunner::PrintComparison(const std::string& BaselineName, const BenchmarkStats& Baseline, const std::string& CandidateName, const BenchmarkStats& Candidate)
 {
     LOG_TITLE("PERFORMANCE COMPARISON", "");
     double SpeedupRatio = Baseline.Median / Candidate.Median;
 
     if (SpeedupRatio > 1.0)
     {
-        LOG_MESSAGEF("%s is %.2fx FASTER than %s (%.2f%% speedup)",
-            CandidateName.c_str(), SpeedupRatio, BaselineName.c_str(), (SpeedupRatio - 1.0) * 100.0);
+        LOG_MESSAGEF("%s is %.2fx FASTER than %s", CandidateName.c_str(), SpeedupRatio, BaselineName.c_str());
     }
     else
     {
-        LOG_MESSAGEF("%s is %.2fx FASTER than %s (%.2f%% regression)",
-            BaselineName.c_str(), 1.0 / SpeedupRatio, CandidateName.c_str(), ((1.0 / SpeedupRatio) - 1.0) * 100.0);
+        LOG_MESSAGEF("%s is %.2fx FASTER than %s", BaselineName.c_str(), 1.0 / SpeedupRatio, CandidateName.c_str());
     }
+
+    LOG_MESSAGEF("   %s Bandwidth: %.2f GB/s", BaselineName.c_str(), Baseline.ThroughputGBps);
+    LOG_MESSAGEF("   %s Bandwidth: %.2f GB/s", CandidateName.c_str(), Candidate.ThroughputGBps);
 }
 
 void BenchmarkRunner::Verify(const std::vector<DataChunk>& Expected, const std::vector<DataChunk>& Actual)

@@ -1,24 +1,20 @@
 #pragma once
 #include "../Operator.h"
 #include <arrow/builder.h>
+#include <climits>
 
 class MinOperator : public Operator
 {
 public:
-    enum class MinMode { Avx, SCALAR };
-
-    // Child operator here is typically a ScanOperator (I/O bound) or MemoryScanOperator
-    SumOperator(std::unique_ptr<Operator> Child, SumMode Mode);
+    MinOperator(std::unique_ptr<Operator> Child, ExecutionMode Mode);
     DataChunk Next() override;
 
 private:
     std::unique_ptr<Operator> ChildOperator;
-    MinMode CurrentMode;
-    bool bFinished;
 
-    long long CalculateAvx(const int32_t* Data, int64_t Length);
-    long long CalculateScalarSum(const int32_t* Data, int64_t Length);
+    int32_t CalculateAvxMin(const int32_t* Data, int64_t Length);
+    int32_t CalculateScalarMin(const int32_t* Data, int64_t Length);
 
-    // returns the horizontal sum of a 256-bit register containing 8 int32_t values
-    int32_t HSum256(__m256i V);
+    // Horizontal Min Helper
+    int32_t HMin256(__m256i V);
 };
